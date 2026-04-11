@@ -54,7 +54,7 @@ lg.groovy --tvname my-small-bedroom-tv on
 ```
 and if you omit the --tvname argument, it defaults to the last used tv.
 
-### 5. Automate it
+### 5. Automate X11 screen events:
 
 To make your TV go on and off with normal Linux power events and screensaver events we need to hook into the acpi system:
 
@@ -85,7 +85,22 @@ If you use sudo, you may need to add this to the end of your /etc/sudoers file:
 
 ```
 <myusername> ALL=NOPASSWD: /my/path/to/lg.groovy
+```
 
+### 6. Automatch system off and on:
+
+Make a script in /usr/lib/systemd/system-sleep/lg-sleep
+
+```
+#!/bin/sh
+case "$1" in
+        pre)
+        /home/chris/GIT/lg/lg.groovy off
+        ;;
+        post)
+        /home/chris/GIT/lg/lg.groovy on
+        ;;
+esac
 ```
 
 ## Credits

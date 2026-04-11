@@ -95,10 +95,10 @@ Make a script in /usr/lib/systemd/system-sleep/lg-sleep
 #!/bin/sh
 case "$1" in
         pre)
-        /home/chris/GIT/lg/lg.groovy off
+        /my/path/to//lg.groovy off
         ;;
         post)
-        /home/chris/GIT/lg/lg.groovy on
+        /my/path/to/lg.groovy on
         ;;
 esac
 ```

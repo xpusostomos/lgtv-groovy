@@ -3,7 +3,7 @@
 	@Grab(group='org.java-websocket', module='Java-WebSocket', version='1.5.3'),
 	@Grab(group='org.slf4j', module='slf4j-nop', version='2.0.7')
 ])
-package lgcontroller;
+package lg
 
 import org.java_websocket.client.WebSocketClient
 import org.java_websocket.handshake.ServerHandshake
@@ -14,12 +14,11 @@ import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.transform.CompileStatic
 import java.util.prefs.Preferences
-import lgcontroller.LGControl
 
 @CompileStatic
-class LGControl {
-	static String PREFIX = "LGControl."
-	static Preferences prefs = Preferences.userNodeForPackage(LGControl)
+class LG {
+	static String PREFIX = "LG."
+	static Preferences prefs = Preferences.userNodeForPackage(LG)
 
 	static void main(String[] args) {
 		String tvName = "", address = "", command = ""
@@ -62,7 +61,7 @@ class LGControl {
 			System.err.println "Error: No address for '${tvName}'. Use --address <IP-address>"
 			System.exit(1)
 		}
-		LGControl lgc = new LGControl()
+		LG lgc = new LG()
 		lgc.execute(address, prefs.get("${PREFIX}${tvName}.clientkey", ""), command, tvName)
 	}
 

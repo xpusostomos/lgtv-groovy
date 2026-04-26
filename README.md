@@ -12,7 +12,9 @@ This script is also easier to use in that it uses the Java preferences system to
 
 ## Installation
 
-### 1. Install groovy on your system. On arch linux it should be as easy as
+### 1. Install groovy on your system. 
+
+On arch linux it should be as easy as
 
 ```
 sudo pacman -S groovy 
@@ -34,7 +36,6 @@ In principle you can also assign an IP address in your TV settings, although you
    * **C1–C4:** All Settings → General → Devices → External Devices → **TV On With Mobile** → Turn on via Wi-Fi
    * **C1-C4:** Support → IP Control Settings → Network IP Control → On
    * *Required even when using a wired Ethernet connection.*
-3. **Recommended:** Set a static DHCP lease for the TV in your router so its IP doesn't change.
 
 ### 4. Run the Script once for each TV you want to control
 
@@ -101,6 +102,23 @@ case "$1" in
         /my/path/to/lg.groovy on
         ;;
 esac
+```
+
+### 6. Automate system events
+
+Drop a script into lg-sleep.sh into /usr/lib/systemd/system-sleep/
+
+```
+#!/bin/sh
+case "$1" in
+		pre)
+		/home/chris/GIT/lg/lg.groovy off
+		;;
+		post)
+		/home/chris/GIT/lg/lg.groovy on
+		;;
+esac
+
 ```
 
 ## Credits

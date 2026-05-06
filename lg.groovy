@@ -23,6 +23,7 @@ class LG {
 	static void main(String[] args) {
 		String tvName = "", address = "", command = ""
 		boolean remove = false
+		boolean list = false
 
 		int i = 0
 		while (i < args.length) {
@@ -30,11 +31,15 @@ class LG {
 				case "--tvname":  tvName = args[++i]; break
 				case "--address": address = args[++i]; break
 				case "--remove":  remove = true; break
+				case "--list":    list = true; break
 				default: command = args[i]
 			}
 			i++
 		}
-		
+		if (list) {
+            listTvs()
+            System.exit(0)
+        }
 		if (tvName) {
 			prefs.put("${PREFIX}lasttv", tvName)
 		} else { 
@@ -62,10 +67,29 @@ class LG {
 			System.exit(1)
 		}
 		LG lgc = new LG()
-		lgc.execute(address, prefs.get("${PREFIX}${tvName}.clientkey", ""), command, tvName)
+		lgc.runWithRetry(address, prefs.get("${PREFIX}${tvName}.clientkey", ""), command, tvName)
 	}
 
-	void execute(String ip, String key, String action, String name) {
+	void runWithRetry(String ip, String key, String action, String tvName) {
+        String mac = prefs.get("${PREFIX}${tvName}.mac", null)
+        
+        for (int i = 0; i < 3; i++) {
+            println "Attempt ${i + 1} to connect to TV..."
+            if (execute(ip, key, action, tvName)) {
+                return // Success!
+            }
+            
+            if (mac && action != "off") {
+                println "TV not responding, sending WoL and waiting..."
+                wake(mac)
+                Thread.sleep(5000) // Give it a moment to respond to the packet
+            }
+        }
+        System.err.println "Failed to connect"
+        System.exit(1)
+    }
+
+	boolean execute(String ip, String key, String action, String tvName) {
 		URI uri = new URI("wss://${ip}:3001")
 		def client = new WebSocketClient(uri) {
 			@Override
@@ -98,8 +122,9 @@ class LG {
 					manifest: manifest
 				] as Map<String, Object>
 					if (key) {
-						payload.put("client-key", key)
-				}	
+					payload.put("client-key", key)
+				}
+				println "sending payload..."
 				send(JsonOutput.toJson([
 					type: "register", 
 					id: "register_42", 
@@ -110,13 +135,19 @@ class LG {
 			@Override
 			void onMessage(String message) {
 				Map json = (Map) new JsonSlurper().parseText(message)
+				println "received msg: ${message}"
 				if (json.type == "registered") {
 					Map pl = (Map) json.payload
 					String newKey = (String) pl?.get("client-key")
 					if (newKey && newKey != key) {
-						prefs.put("${PREFIX}${name}.clientkey", newKey)
+						prefs.put("${PREFIX}${tvName}.clientkey", newKey)
 						key = newKey
-						println "Key saved for ${name}"
+						println "Key saved for ${tvName}"
+						String discoveredMac = getMacFromArp(ip)
+						if (discoveredMac) {
+							prefs.put("${PREFIX}${tvName}.mac", discoveredMac)
+							println "Discovered and saved MAC: ${discoveredMac}"
+						}
 					}
 
 					if (action) {
@@ -129,15 +160,12 @@ class LG {
 						]))
 					}
 				}
-				// if (!key) { 
-				// 	Thread.sleep(5000)
-				// }
 				if (key) {
 					close()
 				}
 			}
 			@Override void onClose(int code, String r, boolean rem) { System.exit(0) }
-			@Override void onError(Exception ex) { System.err.println "Error: ${ex.message}"; System.exit(1) }
+			@Override void onError(Exception ex) { ex.printStackTrace() }
 		}
 
 		// SSL Bypass
@@ -153,8 +181,61 @@ class LG {
 		SSLContext sc = SSLContext.getInstance("TLS")
 		sc.init(null, trustAll, new java.security.SecureRandom())
 		client.setSocketFactory(sc.getSocketFactory())
+		try { 
+			return client.connectBlocking(2, java.util.concurrent.TimeUnit.SECONDS);
+		} catch (Exception ex) {
+			ex.printStackTrace()
+			return false
+		}
+    }
+	static void wake(String macAddress) {
+        println "Calling wakeonlan for ${macAddress}..."
+        try {
+            // We use the full path or ensure it's in the environment PATH. 
+            // On Arch, it's usually just 'wakeonlan'
+            def proc = ["wakeonlan", macAddress].execute()
+            proc.waitFor()
+            
+            if (proc.exitValue() != 0) {
+                System.err.println "wakeonlan binary returned error: ${proc.err.text}"
+            } else {
+                println "wakeonlan executed successfully."
+            }
+        } catch (IOException e) {
+            System.err.println "Failed to execute wakeonlan binary. Is it installed? (sudo pacman -S wakeonlan)"
+        }
+    }
+	
 
-		client.connect()
-		// while(true) { Thread.sleep(1000) }
+	static String getMacFromArp(String ip) {
+		try {
+			// We ping once to ensure the TV is in the system's ARP table
+			InetAddress.getByName(ip).isReachable(500)
+			
+			// On Linux/Arch, we can read the ARP table directly
+			// Or use the 'arp -an' command
+			def process = "arp -an ${ip}".execute()
+			def output = process.text
+			def matcher = output =~ /([0-9a-fA-F]{2}[:]){5}([0-9a-fA-F]{2})/
+			if (matcher.find()) return matcher.group(0)
+		} catch (Exception e) {
+			return null
+		}
+		return null
+	}
+	static void listTvs() {
+		println String.format("%-15s | %-15s | %-18s | %s", "Name", "IP Address", "MAC Address", "Has Key")
+		println "-" * 65
+		
+		// Grab all keys and filter for the addresses to identify unique TVs
+		String[] keys = prefs.keys()
+		keys.findAll { it.startsWith(PREFIX) && it.endsWith(".address") }.each { addrKey ->
+			String name = addrKey.replace(PREFIX, "").replace(".address", "")
+			String ip = prefs.get(addrKey, "N/A")
+			String mac = prefs.get("${PREFIX}${name}.mac", "Unknown")
+			String hasKey = prefs.get("${PREFIX}${name}.clientkey", "") ? "Yes" : "No"
+			
+			println String.format("%-15s | %-15s | %-18s | %s", name, ip, mac, hasKey)
+		}
 	}
 }

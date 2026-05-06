@@ -81,7 +81,7 @@ class LG {
             
             if (mac && action != "off") {
                 println "TV not responding, sending WoL and waiting..."
-                wake(mac)
+                wake(ip, mac)
                 Thread.sleep(5000) // Give it a moment to respond to the packet
             }
         }
@@ -188,12 +188,12 @@ class LG {
 			return false
 		}
     }
-	static void wake(String macAddress) {
+	static void wake(String ip, String macAddress) {
         println "Calling wakeonlan for ${macAddress}..."
         try {
             // We use the full path or ensure it's in the environment PATH. 
             // On Arch, it's usually just 'wakeonlan'
-            def proc = ["wakeonlan", macAddress].execute()
+            def proc = ["wakeonlan", "-i", ip, macAddress].execute()
             proc.waitFor()
             
             if (proc.exitValue() != 0) {

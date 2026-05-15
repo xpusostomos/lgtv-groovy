@@ -5,6 +5,8 @@
 ])
 package lg
 
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import org.java_websocket.client.WebSocketClient
 import org.java_websocket.handshake.ServerHandshake
 import java.net.URI
@@ -24,17 +26,25 @@ class LG {
 		String tvName = "", address = "", command = ""
 		boolean remove = false
 		boolean list = false
+		String input
+		boolean usage = false
 
 		int i = 0
 		while (i < args.length) {
 			switch (args[i]) {
 				case "--tvname":  tvName = args[++i]; break
 				case "--address": address = args[++i]; break
+				case "--input":  input = args[++i]; break
 				case "--remove":  remove = true; break
 				case "--list":    list = true; break
+				case "--help":  usage = true; break;
 				default: command = args[i]
 			}
 			i++
+		}
+		if (usage) {
+			System.out.println("lg --tvname <name> --address <ip> --input <hdmix> --remove --list --help")
+			System.exit(0)
 		}
 		if (list) {
             listTvs()
@@ -66,6 +76,13 @@ class LG {
 			System.err.println "Error: No address for '${tvName}'. Use --address <IP-address>"
 			System.exit(1)
 		}
+
+		if (input) {
+			// Standardize to WebOS format: hdmi1 -> HDMI_1
+			prefs.put("${PREFIX}${tvName}.input", input)
+			println "Default input for ${tvName} set to ${input}"
+		}
+		
 		LG lgc = new LG()
 		lgc.runWithRetry(address, prefs.get("${PREFIX}${tvName}.clientkey", ""), command, tvName)
 	}
@@ -90,6 +107,8 @@ class LG {
     }
 
 	boolean execute(String ip, String key, String action, String tvName) {
+		CountDownLatch latch = new CountDownLatch(1)
+		boolean[] success = [false]
 		URI uri = new URI("wss://${ip}:3001")
 		def client = new WebSocketClient(uri) {
 			@Override
@@ -109,7 +128,7 @@ class LG {
 					],
 					permissions: [
 						"LAUNCH", "CONTROL_AUDIO", "CONTROL_POWER", "CONTROL_TV_SCREEN",
-						"READ_APP_STATUS", "READ_NETWORK_STATE", "READ_POWER_STATE"
+						"READ_APP_STATUS", "READ_NETWORK_STATE", "READ_POWER_STATE", "CONTROL_EXTERNAL_INPUTS"
 					],
 					signatures: [[
 						signatureVersion: 1,
@@ -136,7 +155,23 @@ class LG {
 			void onMessage(String message) {
 				Map json = (Map) new JsonSlurper().parseText(message)
 				println "received msg: ${message}"
+				Map payload = (Map) json.payload
+				// 1. Silent ignore for the "Already On" state
+				if (payload?.get('errorCode') == "-102") {
+					return 
+				}
+				if (json.id == 43) {
+					if (json.type == "response" && payload?.get('returnValue')) {
+						println "Successfully switched to ${payload.get('id')}"
+					} else if (json.type == "error") {
+						System.err.println "HDMI switch failed: ${json.error}"
+					}
+					close()
+					latch.countDown()
+					return
+				}
 				if (json.type == "registered") {
+					success[0] = true
 					Map pl = (Map) json.payload
 					String newKey = (String) pl?.get("client-key")
 					if (newKey && newKey != key) {
@@ -158,14 +193,35 @@ class LG {
 							type: "request", 
 							uri: "ssap://com.webos.service.tvpower/power/${uriPath}"
 						]))
+						String input = prefs.get("${PREFIX}${tvName}.input", null)
+						// String formattedInput = input.toUpperCase().replace("HDMI", "HDMI_")
+						String formattedInput = input.toLowerCase().replace("hdmi", "com.webos.app.hdmi")
+						if (action != "off" && input) {
+							Thread.sleep(500)
+							println "Auto-switching to saved input: ${formattedInput}"
+							send(JsonOutput.toJson([
+								id: 43, // Different ID to avoid collision
+								type: "request",
+								uri: "ssap://system.launcher/launch",
+								// uri: "ssap://com.webos.service.tvstaticitem/setExternalInput",
+								payload: [id: formattedInput]
+							]))
+						} else {
+							latch.countDown()
+						}
+					} else { 
+						latch.countDown()
 					}
+				} else {
+					println "Unhandled message: ${message}"
+					latch.countDown()
 				}
-				if (key) {
-					close()
-				}
+			// 	if (key) {
+			// 		close()
+			// 	}
 			}
-			@Override void onClose(int code, String r, boolean rem) { System.exit(0) }
-			@Override void onError(Exception ex) { ex.printStackTrace() }
+			@Override void onClose(int code, String r, boolean rem) { latch.countDown() }
+			@Override void onError(Exception ex) { ex.printStackTrace(); latch.countDown() }
 		}
 
 		// SSL Bypass
@@ -182,7 +238,12 @@ class LG {
 		sc.init(null, trustAll, new java.security.SecureRandom())
 		client.setSocketFactory(sc.getSocketFactory())
 		try { 
-			return client.connectBlocking(2, java.util.concurrent.TimeUnit.SECONDS);
+			boolean connected = client.connectBlocking(2, TimeUnit.SECONDS);
+			if (!connected) {
+				return false
+			}
+			latch.await(5, TimeUnit.SECONDS)
+			return success[0]
 		} catch (Exception ex) {
 			ex.printStackTrace()
 			return false
@@ -224,7 +285,7 @@ class LG {
 		return null
 	}
 	static void listTvs() {
-		println String.format("%-15s | %-15s | %-18s | %s", "Name", "IP Address", "MAC Address", "Has Key")
+		println String.format("%-15s | %-15s | %-18s | %s | %s", "Name", "IP Address", "MAC Address", "Input", "Has Key")
 		println "-" * 65
 		
 		// Grab all keys and filter for the addresses to identify unique TVs
@@ -232,10 +293,11 @@ class LG {
 		keys.findAll { it.startsWith(PREFIX) && it.endsWith(".address") }.each { addrKey ->
 			String name = addrKey.replace(PREFIX, "").replace(".address", "")
 			String ip = prefs.get(addrKey, "N/A")
+			String input = prefs.get("${PREFIX}${name}.input", "None")
 			String mac = prefs.get("${PREFIX}${name}.mac", "Unknown")
 			String hasKey = prefs.get("${PREFIX}${name}.clientkey", "") ? "Yes" : "No"
 			
-			println String.format("%-15s | %-15s | %-18s | %s", name, ip, mac, hasKey)
+			println String.format("%-15s | %-15s | %-18s | %-5s | %s", name, ip, mac, input, hasKey)
 		}
 	}
 }

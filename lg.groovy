@@ -9,6 +9,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import org.java_websocket.client.WebSocketClient
 import org.java_websocket.handshake.ServerHandshake
+import java.net.InetAddress
 import java.net.URI
 import javax.net.ssl.*
 import java.security.cert.X509Certificate

@@ -38,7 +38,13 @@ class LG {
 				case "--remove":  remove = true; break
 				case "--list":    list = true; break
 				case "--help":  usage = true; break;
-				default: command = args[i]
+				default:
+					println "COMMAND ${i} ${args[i]}"
+					if (args[i].startsWith("-")) {
+						usage = true
+					} else { 
+						command = args[i]
+					}
 			}
 			i++
 		}
